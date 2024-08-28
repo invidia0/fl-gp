@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+def gauss_pdf_array(x, y, sigma, mean, max_val=1.0):
+    """ Computes the probability density function of a 2D Gaussian distribution. """
+    xt, yt = mean
+    val = ((x - xt)**2 + (y - yt)**2) / (2 * sigma**2)
+    return np.exp(-val) * max_val
+
+def gmm_pdf_array(x, y, sigma, means, flag_normalize=False):
+    """
+    Computes the probability density function of a 2D Gaussian mixture model.
+
+    Parameters:
+        x (numpy.ndarray or float): x-coordinates of the grid or specific points.
+        y (numpy.ndarray or float): y-coordinates of the grid or specific points.
+        sigma (float): Standard deviation for the Gaussian components.
+        means (list of tuples): List of mean positions (xt, yt) for each Gaussian component.
+        flag_normalize (bool): If True, normalize the resulting field.
+
+    Returns:
+        numpy.ndarray or float: Evaluated GMM PDF over the grid or at specific points.
+    """
+    # Initialize the value of the field
+    val = np.zeros_like(x, dtype=np.float64)
+
+    # Compute the GMM
+    for mean in means:
+        xt, yt = mean
+        val += np.exp(-((x - xt)**2 + (y - yt)**2) / (2 * sigma**2))
+
+    # Normalize the field if required
+    if flag_normalize:
+        val /= np.sum(val)
+
+    return val
+
+def sense_neighbors(robots: np.ndarray) -> np.ndarray:
+    """
+    Sense the neighbors of each robot and update the neighbors attribute.
+    """
+    M = len(robots) # Agents
+
+    for robot in robots:
+        neighbors = np.array([])
+        for other_robot in robots:
+            if other_robot != robot:
+                dist = np.linalg.norm(robot.position - other_robot.position)
+                if dist <= robot.range:
+                    neighbors = np.append(neighbors, other_robot)
+        robot.neighbors = neighbors
+
+    return robots
+
+def update_A(robots: np.ndarray, A: np.ndarray) -> np.ndarray:
+    """
+    Update the adjacency matrix of the robots.
+    """
+    for i, robot in enumerate(robots):
+        for j, other_robot in enumerate(robots):
+            if i != j:
+                dist = np.linalg.norm(robot.position - other_robot.position)
+                if dist <= robot.range:
+                    A[i, j] = 1
+                else:
+                    A[i, j] = 0
+
+    return A
+
+def find_groups(robots: np.ndarray, A: np.ndarray) -> None:
+    """
+    Find the groups of robots and assign the group ID to each robot.
+
+    Parameters:
+    robots (np.ndarray): An array of Robot objects.
+    A (np.ndarray): Adjacency matrix representing the connections between robots.
+    """
+    M = len(robots)  # Number of robots
+    group_id = 1  # Group ID starts from 1
+
+    def dfs(node, current_group_id):
+        """Depth-First Search to mark all robots in the same group."""
+        robots[node].group = current_group_id
+        for neighbor in range(M):
+            if A[node, neighbor] == 1 and robots[neighbor].group is None:
+                dfs(neighbor, current_group_id)
+
+    # Reset groups before starting
+    for robot in robots:
+        robot.group = None
+
+    for i in range(M):
+        if robots[i].group is None:  # If this robot hasn't been assigned to a group
+            dfs(i, group_id)
+            group_id += 1
+
+def RBFKernel(X1: np.ndarray, 
+           X2: np.ndarray,
+           lengthscale: float=1.0,
+           sigma_f: float=1.0) -> np.ndarray:
+    """
+    Exponentiated Quadratic Kernel
+    (https://peterroelants.github.io/posts/gaussian-process-kernels/#Exponentiated-quadratic-kernel)
+    
+    Args:
+        X1: Array of m points (m x d).
+        X2: Array of n points (n x d).
+
+    Returns:
+        (m x n) matrix.
+    """
+    sqdist = np.sum(X1**2, 1).reshape(-1, 1) + np.sum(X2**2, 1) - 2 * np.dot(X1, X2.T)
+
+    RBF = np.exp(- 0.5 * sqdist / lengthscale**2)
+
+    C = sigma_f**2
+
+    return C * RBF
+
+def posterior(X_eval: np.ndarray, 
+              X_train: np.ndarray, 
+              Y_train: np.ndarray,
+              lengthscale: float=1.0, 
+              sigma_f: float=1.0, 
+              sigma_y: float=1e-6) -> tuple:
+    """
+    Computes mean and covariance of the posterior distribution.
+    
+    Args:
+        X_eval: Input locations to evaluate the posterior (n x d).
+        X_train: Training locations (m x d).
+        Y_train: Training values (m x 1).
+        sigma_l: Kernel length parameter (describes the spatial correlation between points).
+        sigma_f: Kernel vertical variation parameter (describes the vertical variation of the kernel).
+        sigma_y: Noise parameter (describes the noise level of the data).
+    
+    Returns:
+        Posterior mean vector (n x d) and covariance matrix (n x n) as a tuple.
+    """
+
+    k = RBFKernel(X_train, X_train, lengthscale=lengthscale, sigma_f=sigma_f) + sigma_y**2 * np.eye(len(X_train))
+    k_s = RBFKernel(X_train, X_eval, lengthscale=lengthscale, sigma_f=sigma_f)
+    k_ss = RBFKernel(X_eval, X_eval, lengthscale=lengthscale, sigma_f=sigma_f)
+    k_inv = np.linalg.inv(k)
+
+    mu = k_s.T.dot(k_inv).dot(Y_train)
+    cov = (k_ss - k_s.T.dot(k_inv).dot(k_s))
+
+    mu[mu < 0] = 0
+    cov[cov < 0] = 0
+    
+    return mu, cov
+
+def log_likelihood_grad(robot):
+    """ 
+    Computes the gradient of the log-likelihood with respect to 
+    the hyperparameters: lengthscale, sigma_f, and sigma_y.
+    """
+    # X = robot.get_dataset()[:, :2]
+    # y = robot.get_dataset()[:, 2]
+    X = robot.dataset[:, :2]
+    y = robot.dataset[:, 2]
+    y = np.atleast_2d(y).T
+    
+    # Calculate the RBF kernel
+    K = RBFKernel(X, X, sigma_f=robot.sigma_f, lengthscale=robot.lengthscale)
+    
+    # Add noise variance term
+    C_theta = K + robot.sigma_y**2 * np.eye(len(X)) + 1e-4 * np.eye(len(X))
+    
+    C_theta_inv = np.linalg.solve(C_theta, np.eye(len(X)))
+    
+    # Compute the squared distance matrix
+    sqdist = np.sum(X**2, 1, dtype=np.float128).reshape(-1, 1) + np.sum(X**2, 1, dtype=np.float128) - 2 * np.dot(X, X.T)
+    
+    # Gradients of the covariance matrix with respect to hyperparameters
+    dC_lengthscale = K * sqdist / (robot.lengthscale**3)
+    dC_theta_f = 2 * K / robot.sigma_f
+    dC_theta_y = np.eye(len(X)) * 2 * robot.sigma_y
+
+    # Compute the gradient of the log-likelihood
+    common_term = C_theta_inv - (C_theta_inv @ y @ y.T @ C_theta_inv)
+    dNLL_lengthscale = 0.5 * np.trace(common_term @ dC_lengthscale, dtype=np.float128)
+    dNLL_sigma_f = 0.5 * np.trace(common_term @ dC_theta_f, dtype=np.float128)
+    dNLL_sigma_y = 0.5 * np.trace(common_term @ dC_theta_y, dtype=np.float128)
+
+    return np.array([dNLL_lengthscale, dNLL_sigma_f, dNLL_sigma_y], dtype=np.float128)
+
+def plot_field(fig, t, period, bbox, field, ax1, x1_mesh: np.ndarray, x2_mesh: np.ndarray) -> None:
+    X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
+    size = 16
+    robot_id = 0
+    font = {'family': 'serif',
+            'size': size}
+    plt.rcParams.update({'font.family': 'serif', 'font.size': size})
+    
+    # Set the title of the figure
+    fig.suptitle(f"Time Step: {t} of {period}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
+    delta_axis = 1
+    ax1.clear()
+    ax1.axis("equal")
+    
+    # Set the font for the axis labels
+    ax1.set_xlim(X_MIN - delta_axis, X_MAX + delta_axis)
+    ax1.set_ylim(Y_MIN - delta_axis, Y_MAX + delta_axis)
+    ax1.set_xticks(np.arange(X_MIN, X_MAX + delta_axis, 10))
+    ax1.set_yticks(np.arange(Y_MIN, Y_MAX + delta_axis, 10))
+    ax1.set_aspect('equal', adjustable='box')
+    
+    # Plot the boundary
+    ax1.plot([X_MIN, X_MIN], [Y_MIN, Y_MAX], 'k-', lw=2)
+    ax1.plot([X_MIN, X_MAX], [Y_MIN, Y_MIN], 'k-', lw=2)
+    ax1.plot([X_MAX, X_MAX], [Y_MIN, Y_MAX], 'k-', lw=2)
+    ax1.plot([X_MIN, X_MAX], [Y_MAX, Y_MAX], 'k-', lw=2)
+    
+    # # Set ticks font and size
+    # for tick in ax1.xaxis.get_major_ticks():
+    #     tick.label.set_fontsize(size)
+    #     tick.label.set_fontname('serif')
+    # for tick in ax1.yaxis.get_major_ticks():
+    #     tick.label.set_fontsize(size)
+    #     tick.label.set_fontname('serif')
+    
+    ax1.grid(alpha=0.2)
+
+    col = "black"
+    ax1.set_title("Field and Robots", fontdict=font)
+    # Parula colormap
+    cmap = LinearSegmentedColormap.from_list('parula', cm_data)
+    original_field = ax1.contourf(x1_mesh, x2_mesh, field, cmap="viridis")
+    
+    NBINS = 4
+    # Add the colorbars under the plots
+    divider1 = make_axes_locatable(ax1)
+    cax1 = divider1.append_axes("bottom", size="5%", pad=0.5)
+    cbar1 = plt.colorbar(original_field, cax=cax1, orientation="horizontal", format="%.1f")
+    cbar1.ax.tick_params(rotation=90)
+    tick_locator = plt.MaxNLocator(nbins=NBINS)
+    cbar1.locator = tick_locator
+    # Set the font family and size for the colorbar
+    cbar1.ax.yaxis.label.set_fontsize(size)
+    cbar1.ax.yaxis.label.set_fontname('serif')
+    cbar1.update_ticks()
+
+    # Set the title of the figure
+    fig.suptitle(f"Time Step: {t}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
+    
+    plt.show()
+
+def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, axes, A) -> None:
+    X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
+    size = 16
+    robot_id = 0
+    font = {'family': 'serif',
+            'size': size}
+    plt.rcParams.update({'font.family': 'serif', 'font.size': size})
+    
+    # Set the title of the figure
+    fig.suptitle(f"Time Step: {t}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
+    delta_axis = 1
+    for ax in [ax1, ax2, ax3]:
+        ax.clear()
+        ax.axis("equal")
+        
+        # Set the font for the axis labels
+        ax.set_xlim(X_MIN - delta_axis, X_MAX + delta_axis)
+        ax.set_ylim(Y_MIN - delta_axis, Y_MAX + delta_axis)
+        ax.set_xticks(np.arange(X_MIN, X_MAX + delta_axis, 10))
+        ax.set_yticks(np.arange(Y_MIN, Y_MAX + delta_axis, 10))
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Plot the boundary
+        ax.plot([X_MIN, X_MIN], [Y_MIN, Y_MAX], 'k-', lw=2)
+        ax.plot([X_MIN, X_MAX], [Y_MIN, Y_MIN], 'k-', lw=2)
+        ax.plot([X_MAX, X_MAX], [Y_MIN, Y_MAX], 'k-', lw=2)
+        ax.plot([X_MIN, X_MAX], [Y_MAX, Y_MAX], 'k-', lw=2)
+        
+        # Set ticks font and size
+        # for tick in ax.xaxis.get_major_ticks():
+        #     tick.label.set_fontsize(size)
+        #     tick.label.set_fontname('serif')
+        # for tick in ax.yaxis.get_major_ticks():
+        #     tick.label.set_fontsize(size)
+        #     tick.label.set_fontname('serif')
+        
+        ax.grid(alpha=0.2)
+
+    col = "black"
+    ax1.set_title("Field and Robots", fontdict=font)
+    # Parula colormap
+    # cmap = LinearSegmentedColormap.from_list('parula', cm_data)
+    original_field = ax1.contour(x1_mesh, x2_mesh, field, cmap="YlGnBu", extend='both')
+    for i, robot in enumerate(robots):
+        ax1.scatter(robot.position[0], robot.position[1], color=col, s=30)
+        ax1.text(robot.position[0], robot.position[1] + 2.0, f"{i}", fontsize=14, ha='center', va='center', color=col, fontfamily="serif", fontweight="bold")
+        region = robot.diagram
+        ax1.plot(region[:, 0], region[:, 1], color=col, lw=2)
+        # Plot the centroid
+        ax1.scatter(robot.centroid[0], robot.centroid[1], color=col, s=10)
+
+    # Plot a line between the robots that are neighbors using the adjacency matrix and avoiding duplicating lines
+    for i in range(len(robots)):
+        for j in range(i + 1, len(robots)):  # Start from i + 1 to avoid duplicates
+            if A[i, j] == 1:
+                ax1.plot([robots[i].position[0], robots[j].position[0]], [robots[i].position[1], robots[j].position[1]], color="blue", lw=2, alpha=0.7, linestyle='--')
+    # Plot the observations
+    for robot in robots:
+        X = robot.get_dataset()[:, :2]
+        y = robot.get_dataset()[:, 2]
+        y = np.atleast_2d(y).T
+        ax1.scatter(X[:, 0], X[:, 1], marker='x', alpha=0.2)
+
+    mu = robots[robot_id].mean
+    std = robots[robot_id].std
+    
+    ax2.set_title(f"Posterior Mean ({robot_id})", fontdict=font)
+    post_mean = ax2.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
+    
+    ax3.set_title(f"Posterior Variance ({robot_id})", fontdict=font)
+    post_var = ax3.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
+    
+    NBINS = 4
+    # divider1 = make_axes_locatable(ax1)
+    # cax1 = divider1.append_axes("bottom", size="5%", pad=0.5)
+    # cbar1 = plt.colorbar(original_field, cax=cax1, orientation="horizontal", format="%.1f")
+    # cbar1.ax.tick_params(rotation=90)
+    # tick_locator = plt.MaxNLocator(nbins=NBINS)
+    # cbar1.locator = tick_locator
+    # cbar1.ax.yaxis.label.set_fontsize(size)
+    # cbar1.ax.yaxis.label.set_fontname('serif')
+    # cbar1.update_ticks()
+    
+    divider2 = make_axes_locatable(ax2)
+    cax2 = divider2.append_axes("bottom", size="5%", pad=0.5)
+    cbar2 = plt.colorbar(post_mean, cax=cax2, orientation="horizontal", format="%.1f")
+    cbar2.ax.tick_params(rotation=90)
+    tick_locator = plt.MaxNLocator(nbins=NBINS)
+    cbar2.locator = tick_locator
+    cbar2.ax.yaxis.label.set_fontsize(size)
+    cbar2.ax.yaxis.label.set_fontname('serif')
+    cbar2.update_ticks()
+    
+    divider3 = make_axes_locatable(ax3)
+    cax3 = divider3.append_axes("bottom", size="5%", pad=0.5)
+    cbar3 = plt.colorbar(post_var, cax=cax3, orientation="horizontal", format="%.1f")
+    cbar3.ax.tick_params(rotation=90)
+    tick_locator = plt.MaxNLocator(nbins=NBINS)
+    cbar3.locator = tick_locator
+    cbar3.ax.yaxis.label.set_fontsize(size)
+    cbar3.ax.yaxis.label.set_fontname('serif')
+    cbar3.update_ticks()
+
+    # For every robot in the simulation plot the mean and variance of the GP
+    for i in range(len(robots)):
+        mu = robots[i].mean
+        std = robots[i].std
+
+        ax1 = axes[i, 0]
+        ax2 = axes[i, 1]
+
+        ax1.set_title(f"Posterior Mean ({i})", fontdict=font)
+        post_mean = ax1.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
+
+        ax2.set_title(f"Posterior Variance ({i})", fontdict=font)
+        post_var = ax2.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
+        
+    
+    plt.pause(1)
+    # if t in [1, 2, 3, 99, 100, 110, 120, 150, 200]:
+    # plt.savefig(f"pictures/TRO/novf_simple{t}.pdf", bbox_inches='tight', format='pdf', dpi=300)
+    # plt.show()
+    # plt.savefig(f"frames/static/frame_{t}.png", bbox_inches='tight', format='png', dpi=300)
+    # plt.savefig(f"frames/webots2/frame_{t}.png", bbox_inches='tight', format='png', dpi=300)
+
+    if t != period:
+        # cbar1.remove()
+        cbar2.remove()
+        cbar3.remove()
