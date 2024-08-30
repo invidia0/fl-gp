@@ -188,68 +188,82 @@ def log_likelihood_grad(robot):
 
     return np.array([dNLL_lengthscale, dNLL_sigma_f, dNLL_sigma_y], dtype=np.float128)
 
-def plot_field(fig, t, period, bbox, field, ax1, x1_mesh: np.ndarray, x2_mesh: np.ndarray) -> None:
-    X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
-    size = 16
-    robot_id = 0
-    font = {'family': 'serif',
-            'size': size}
-    plt.rcParams.update({'font.family': 'serif', 'font.size': size})
+# Function to process each group
+def process_group(group, robots, s_end_DEC_gapx, rho, ki, beta, eps, s_end_DAC, x1_, x2_, ROB_NUM):
+    print(f"Group {group} is being processed")
     
-    # Set the title of the figure
-    fig.suptitle(f"Time Step: {t} of {period}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
-    delta_axis = 1
-    ax1.clear()
-    ax1.axis("equal")
+    # Extract robots in the current group
+    robots_group = [robot for robot in robots if robot.group == group]
     
-    # Set the font for the axis labels
-    ax1.set_xlim(X_MIN - delta_axis, X_MAX + delta_axis)
-    ax1.set_ylim(Y_MIN - delta_axis, Y_MAX + delta_axis)
-    ax1.set_xticks(np.arange(X_MIN, X_MAX + delta_axis, 10))
-    ax1.set_yticks(np.arange(Y_MIN, Y_MAX + delta_axis, 10))
-    ax1.set_aspect('equal', adjustable='box')
-    
-    # Plot the boundary
-    ax1.plot([X_MIN, X_MIN], [Y_MIN, Y_MAX], 'k-', lw=2)
-    ax1.plot([X_MIN, X_MAX], [Y_MIN, Y_MIN], 'k-', lw=2)
-    ax1.plot([X_MAX, X_MAX], [Y_MIN, Y_MAX], 'k-', lw=2)
-    ax1.plot([X_MIN, X_MAX], [Y_MAX, Y_MAX], 'k-', lw=2)
-    
-    # # Set ticks font and size
-    # for tick in ax1.xaxis.get_major_ticks():
-    #     tick.label.set_fontsize(size)
-    #     tick.label.set_fontname('serif')
-    # for tick in ax1.yaxis.get_major_ticks():
-    #     tick.label.set_fontsize(size)
-    #     tick.label.set_fontname('serif')
-    
-    ax1.grid(alpha=0.2)
+    for s in range(s_end_DEC_gapx):
+        old_hypers = np.array([robot.hyps for robot in robots_group])
+        tmp_hyps = np.zeros_like(old_hypers)  # Preallocate tmp_hyps with the same shape
 
-    col = "black"
-    ax1.set_title("Field and Robots", fontdict=font)
-    # Parula colormap
-    cmap = LinearSegmentedColormap.from_list('parula', cm_data)
-    original_field = ax1.contourf(x1_mesh, x2_mesh, field, cmap="viridis")
-    
-    NBINS = 4
-    # Add the colorbars under the plots
-    divider1 = make_axes_locatable(ax1)
-    cax1 = divider1.append_axes("bottom", size="5%", pad=0.5)
-    cbar1 = plt.colorbar(original_field, cax=cax1, orientation="horizontal", format="%.1f")
-    cbar1.ax.tick_params(rotation=90)
-    tick_locator = plt.MaxNLocator(nbins=NBINS)
-    cbar1.locator = tick_locator
-    # Set the font family and size for the colorbar
-    cbar1.ax.yaxis.label.set_fontsize(size)
-    cbar1.ax.yaxis.label.set_fontname('serif')
-    cbar1.update_ticks()
+        for id, robot in enumerate(robots_group):
+            # Collect neighbors' hyperparameters
+            neighbors_hyps = np.vstack([neighbor.hyps for neighbor in robot.neighbors])
+            n_neighbors = neighbors_hyps.shape[0]
 
-    # Set the title of the figure
-    fig.suptitle(f"Time Step: {t}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
-    
-    plt.show()
+            # Duals (30a) (Consensus)
+            sum_diff = np.sum(neighbors_hyps - robot.hyps, axis=0)
+            robot.p += rho * sum_diff
 
-def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, axes, A) -> None:
+            # Primal (34b) (ADMM)
+            first_term = rho * np.sum(neighbors_hyps, axis=0)
+            second_term = log_likelihood_grad(robot)
+            third_term = (ki + n_neighbors * rho) * robot.hyps
+            res = (first_term - second_term + third_term - robot.p) / (ki + 2 * n_neighbors * rho)
+            tmp_hyps[id] = res
+
+        # Update robot hyperparameters
+        for i, robot in enumerate(robots_group):
+            robot.hyps = tmp_hyps[i]
+
+        for robot in robots_group:
+            print(f"Robot {robot.id} has hyperparameters: {robot.hyps}")
+        print(f"- Done! - ")
+
+    # DEC-PoE
+    print(f"DEC-PoE for group {group}")
+    for robot in robots_group:
+        robot.update_estimate()
+
+    # Initialize the weights
+    for robot in robots_group:
+        robot.w_mu = beta * robot.cov_rec * robot.mean
+        robot.w_cov = beta * robot.cov_rec
+
+    shape = (len(x1_), len(x2_))
+
+    for s in range(s_end_DAC):
+        sum_mu_diff = np.zeros(shape, dtype=np.float128)
+        sum_cov_diff = np.zeros(shape, dtype=np.float128)
+
+        for robot in robots_group:
+            neighbors_w_mu = np.array([other_robot.w_mu for other_robot in robot.neighbors])
+            neighbors_w_cov = np.array([other_robot.w_cov for other_robot in robot.neighbors])
+
+            # DAC 1 (Mean)
+            sum_mu_diff = np.sum(neighbors_w_mu, axis=0) - robot.w_mu * len(robot.neighbors)
+            robot.tmp_w_mu = robot.w_mu + eps * sum_mu_diff
+
+            # DAC 2 (Covariance)
+            sum_cov_diff = np.sum(neighbors_w_cov, axis=0) - robot.w_cov * len(robot.neighbors)
+            robot.tmp_w_cov = robot.w_cov + eps * sum_cov_diff
+
+        # Update robot properties after the calculation
+        for robot in robots_group:
+            robot.w_mu = robot.tmp_w_mu
+            robot.w_cov = robot.tmp_w_cov
+
+        for robot in robots_group:
+            robot.cov_rec = ROB_NUM * robot.w_cov
+            robot.std = np.sqrt(1 / robot.cov_rec)
+            robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot.w_mu)
+
+        print(f"- Done! - ")
+
+def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, A) -> None:
     X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
     size = 16
     robot_id = 0
@@ -352,19 +366,19 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
     cbar3.ax.yaxis.label.set_fontname('serif')
     cbar3.update_ticks()
 
-    # For every robot in the simulation plot the mean and variance of the GP
-    for i in range(len(robots)):
-        mu = robots[i].mean
-        std = robots[i].std
+    # # For every robot in the simulation plot the mean and variance of the GP
+    # for i in range(len(robots)):
+    #     mu = robots[i].mean
+    #     std = robots[i].std
 
-        ax1 = axes[i, 0]
-        ax2 = axes[i, 1]
+    #     ax1 = axes[i, 0]
+    #     ax2 = axes[i, 1]
 
-        ax1.set_title(f"Posterior Mean ({i})", fontdict=font)
-        post_mean = ax1.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
+    #     ax1.set_title(f"Posterior Mean ({i})", fontdict=font)
+    #     post_mean = ax1.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
 
-        ax2.set_title(f"Posterior Variance ({i})", fontdict=font)
-        post_var = ax2.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
+    #     ax2.set_title(f"Posterior Variance ({i})", fontdict=font)
+    #     post_var = ax2.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
         
     
     plt.pause(1)

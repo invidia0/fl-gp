@@ -8,8 +8,6 @@ import glob
 import concurrent.futures
 from scipy.interpolate import Rbf
 
-np.random.seed(0)
-
 ############################################################################################################
 """ Dataset (ROMS, Intel Berkeley) """
 data_file = 'data_filtered-time.txt'
@@ -62,14 +60,14 @@ _X1, _X2 = np.meshgrid(x1_, x2_)
 mesh = np.vstack([_X1.ravel(), _X2.ravel()]).T
 
 # Generate random means
-peaks = 8 # np.random.randint(1, 10)
+peaks = 2 # np.random.randint(1, 10)
 means = np.random.uniform(low=0, high=area_size, size=(peaks, 2))
-sigma = 5
+sigma = 6
 Z = utils.gmm_pdf_array(mesh[:, 0], mesh[:, 1], sigma, means, flag_normalize=False)
 Z = Z.reshape(len(x1_), len(x2_))
 
 """ Robots parameters """
-ROB_NUM = 4
+ROB_NUM = 6
 CAMERA_BOX = 2
 
 _area_to_cover = (x_sup * y_sup) * 1.0
@@ -79,10 +77,10 @@ RANGE = np.sqrt((_area_to_cover / ROB_NUM) / np.pi) * 2
 K_GAIN = 3
 D_t = 0.1
 
-fig, axes = plt.subplots(4, 2)
-# set axes aspect ratio to be equal
-for ax in axes.flatten():
-    ax.set_aspect('equal')
+# fig, axes = plt.subplots(4, 2)
+# # set axes aspect ratio to be equal
+# for ax in axes.flatten():
+#     ax.set_aspect('equal')
 
 robots = np.empty(ROB_NUM, dtype=object)
 
@@ -96,8 +94,10 @@ for r in np.arange(ROB_NUM):
                 id=r,
                 x1_init=x1,
                 x2_init=x2,
+                x1Vals=x1_,
+                x2Vals=x2_,
                 sensing_range=RANGE,
-                sensor_noise=0.05,
+                sensor_noise=0.1,
                 bbox=BBOX,
                 mesh=mesh,
                 field_delta=d_field_)
@@ -123,15 +123,13 @@ TOL_ADMM = 1e-3
 
 """ DEC-PoE """
 beta = 1 / ROB_NUM
-s_end_DAC = 1000
+s_end_DAC = 500
 
 """
 Main loop
 """
 for t in np.arange(0, PERIOD):
     print(f"\n*** Step: {t} ***")
-    # W_t = np.tanh(1 * t)
-    W_t = 10
 
     if t == 0:
         first = True
@@ -152,53 +150,18 @@ for t in np.arange(0, PERIOD):
     max_degree = np.max(degrees)
 
     eps = 1 / (max_degree)
+    eps = eps / 2
 
     for i, robot in enumerate(robots):
-        # Set the robot's group
-        robot.set_Wt = W_t
-        # robot.group = groups[i]
-        # robot.set_field(FIELD)
+        robot.time = t
         robot.compute_voronoi()
-        
-        # if SPARSE:
-        # vertices = robot.diagram
-        # vertXinf, vertYinf = np.min(vertices, axis=0)
-        # vertXsup, vertYsup = np.max(vertices, axis=0)
-        
-        # x_left, x_right = robot.position[0] - CAMERA_BOX, robot.position[0] + CAMERA_BOX
-        # y_bottom, y_top = robot.position[1] - CAMERA_BOX, robot.position[1] + CAMERA_BOX
-        # # Check that the camera box is inside the voronoi diagram
-        # if x_left < vertXinf:
-        #     x_left = vertXinf
-        # if x_right > vertXsup:
-        #     x_right = vertXsup
-        # if y_bottom < vertYinf:
-        #     y_bottom = vertYinf
-        # if y_top > vertYsup:
-        #     y_top = vertYsup
-
-        # num_points_x = 5 # Adjust the number of points as needed
-        # num_points_y = 5 # Adjust the number of points as needed
-
-        # x_vals = np.linspace(x_left, x_right, num_points_x)
-        # y_vals = np.linspace(y_bottom, y_top, num_points_y)
-
-        # x_vals, y_vals = np.meshgrid(x_vals, y_vals)
-        # points = np.stack([x_vals.ravel(), y_vals.ravel()], axis=1)
-        # y_values = field_eval(points[:, 0], points[:, 1]) + robot.sensor_noise * np.random.randn(len(points))
 
         # Take 5 random points from the robot sensing area
         points = np.random.uniform(robot.position - CAMERA_BOX, robot.position + CAMERA_BOX, (5, 2))
-        # y_values = f_eval(points[:, 0], points[:, 1]) + robot.sensor_noise * np.random.randn(len(points))
         y_values = utils.gmm_pdf_array(points[:, 0], points[:, 1], sigma, means, flag_normalize=False) + robot.sensor_noise * np.random.randn(len(points))
         
-        # y_value = f_eval(robot.position[0], robot.position[1]) + np.random.normal(0, robot.sensor_noise**2)
         robot.sense(points, y_values, first=first)
         robot.update_dataset() # Update the dataset with the new observation
-
-    # for robot in robots:
-    #     for other_robot in robot.neighbors:
-    #         robot.sense(other_robot.observations[:, :2], other_robot.observations[:, 2], first=first)
 
     for robot in robots:
         robot.update_dataset()
@@ -254,38 +217,36 @@ for t in np.arange(0, PERIOD):
             robot.w_mu = beta * robot.cov_rec * robot.mean
             robot.w_cov = beta * robot.cov_rec
                     
+        shape = (len(x1_), len(x2_))
+
         for s in range(s_end_DAC):
+            # Preallocate sums for mean and covariance calculations
+            sum_mu_diff = np.zeros(shape, dtype=np.float128)
+            sum_cov_diff = np.zeros(shape, dtype=np.float128)
+
+            # Loop through robots and calculate the sum of differences for DAC 1 and DAC 2
             for robot in robots_group:
-                neighbors_w_mu = []
-                neighbors_w_cov = []
-                for other_robot in robot.neighbors:
-                    neighbors_w_mu.append(other_robot.w_mu)
-                    neighbors_w_cov.append(other_robot.w_cov)
-                n_neighbors = len(neighbors_w_mu)
+                neighbors_w_mu = np.array([other_robot.w_mu for other_robot in robot.neighbors])
+                neighbors_w_cov = np.array([other_robot.w_cov for other_robot in robot.neighbors])
 
                 # DAC 1 (Mean)
-                sum = np.zeros([len(x1_), len(x2_)], dtype=np.float128)
-                for k in range(n_neighbors):
-                    sum = sum + (neighbors_w_mu[k] - robot.w_mu)
-                robot.tmp_w_mu = robot.w_mu + eps * sum
+                sum_mu_diff = np.sum(neighbors_w_mu, axis=0) - robot.w_mu * len(robot.neighbors)
+                robot.tmp_w_mu = robot.w_mu + eps * sum_mu_diff
 
-                # DAC 2 (coviance)
-                sum = np.zeros([len(x1_), len(x2_)], dtype=np.float128)
-                for k in range(n_neighbors):
-                    sum = sum + (neighbors_w_cov[k] - robot.w_cov)
-                robot.tmp_w_cov = robot.w_cov + eps * sum
+                # DAC 2 (Covariance)
+                sum_cov_diff = np.sum(neighbors_w_cov, axis=0) - robot.w_cov * len(robot.neighbors)
+                robot.tmp_w_cov = robot.w_cov + eps * sum_cov_diff
 
+            # Update robot properties after the calculation
             for robot in robots_group:
                 robot.w_mu = robot.tmp_w_mu
                 robot.w_cov = robot.tmp_w_cov
-
-            for robot in robots_group:
-                robot.cov_rec = ROB_NUM * robot._w_cov
-                robot.cov_rec[robot.cov_rec < 0] = 0
-                np.nan_to_num(robot.cov_rec, copy=False)
-                # Update the std and cov
-                robot.std = np.sqrt(1/robot.cov_rec)
-                robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot._w_mu)
+            
+        for robot in robots_group:
+            # Update the covariance record and other properties
+            robot.cov_rec = ROB_NUM * robot.w_cov
+            robot.std = np.sqrt(1 / robot.cov_rec)
+            robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot.w_mu)
 
         print(f"- Done! - ")
 
@@ -294,7 +255,7 @@ for t in np.arange(0, PERIOD):
     
     # if t in saveTimes:
         # utils.plot_dataset(fig, t, PERIOD, BBOX, FIELD, ax1, ax2, ax3, X1_FIELD, X2_FIELD, X1MESH, X2MESH, robots)
-    utils.plot_dataset(fig, t, PERIOD, BBOX, Z, ax1, ax2, ax3, x1_, x2_, _X1, _X2, robots, axes, A)
+    utils.plot_dataset(fig, t, PERIOD, BBOX, Z, ax1, ax2, ax3, x1_, x2_, _X1, _X2, robots, A)
             
     # Move the robots
     for robot in robots:

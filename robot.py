@@ -22,7 +22,9 @@ class Robot:
                  sensing_range: np.float64, 
                  sensor_noise: np.float64, 
                  bbox: np.ndarray,
-                 mesh: np.ndarray, 
+                 mesh: np.ndarray,
+                 x1Vals: np.ndarray,
+                 x2Vals: np.ndarray,
                  field_delta: np.int8 = 1) -> None:
         
         self._M = total_robots
@@ -32,11 +34,11 @@ class Robot:
         self._range = sensing_range
         self._observations = np.empty((0, 3), dtype=np.float64)
         self._eval_dataset = np.empty((0, 3), dtype=np.float64)
-        self._W_t = 0.0
+        self._time = 0.0
         self._field = None
         self._field_delta = field_delta
-        self._xVals = np.arange(bbox[0], bbox[2] + field_delta, field_delta)
-        self._yVals = np.arange(bbox[1], bbox[3] + field_delta, field_delta)
+        self._xVals = x1Vals
+        self._yVals = x2Vals
         self._neighbors = np.empty((0, 0))
         self._bbox = bbox
         self._mesh = mesh
@@ -165,6 +167,10 @@ class Robot:
     @property
     def tmp_w_cov(self) -> np.ndarray:
         return self._tmp_w_cov
+    
+    @property
+    def time(self) -> np.ndarray:
+        return self._time
 
     """ Setters """
     @neighbors.setter
@@ -217,6 +223,10 @@ class Robot:
     def tmp_w_cov(self, value: np.ndarray) -> None:
         self._tmp_w_cov = value
 
+    @time.setter
+    def time(self, value: np.float64) -> None:
+        self._time = value
+
     """ Methods """
     def get_dataset(self) -> np.ndarray:
         return self._observations
@@ -264,10 +274,16 @@ class Robot:
         """ Explore-Exploit trade-off """
         mu = self._mean[bool_val.reshape(self._xVals.shape[0], self._yVals.shape[0])]
         std = self._std[bool_val.reshape(self._xVals.shape[0], self._yVals.shape[0])]
-        
-        weight = std + self._W_t * mu
-        weight = np.exp(weight)-1
-        
+
+        mu *= 1000
+        std *= 1000
+
+        mu = (mu - np.min(mu)) / (np.max(mu) - np.min(mu))
+        std = (std - np.min(std)) / (np.max(std) - np.min(std))
+
+        weight = std + np.tanh(0.1 * self._time) * mu
+        weight = np.exp(weight) - 1
+
         A = np.sum(weight) * dA
         if A == 0:
             Cx = self._centroid[0]
@@ -408,14 +424,12 @@ class Robot:
             self._eval_dataset = np.vstack((self._eval_dataset, np.column_stack((points, value))))
         else:
             self._eval_dataset = np.vstack((self._eval_dataset, np.column_stack((points, value))))
-        # self._eval_dataset = np.vstack((self._eval_dataset, np.column_stack((points, value))))
             
     def update_estimate(self):
         mu, cov = self.predict(self._mesh)
         self._mean = np.reshape(mu, (self._xVals.shape[0], self._yVals.shape[0]))
         self._cov = np.reshape(np.diag(cov), (self._xVals.shape[0], self._yVals.shape[0]))
         self._cov_rec = np.reshape(1/np.diag(cov), (self._xVals.shape[0], self._yVals.shape[0]))
-        # self._std = np.reshape(np.sqrt(np.diag(cov)), (self._xVals.shape[0], self._yVals.shape[0]))
         self._mu_max = np.max(self._mean)
         self._mu_min = np.min(self._mean)
         self._delta = self._mu_max - self._mu_min
