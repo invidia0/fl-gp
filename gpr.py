@@ -76,7 +76,7 @@ def nll_fn(X_train, Y_train, naive=False):
     Y_train = Y_train.ravel()
 
     def nll_naive(theta):
-        k = kernel(X_train, X_train, sigma_l=theta[0], sigma_f=theta[1]) + \
+        k = kernel(X_train, X_train, lengthscale=theta[0], sigma_f=theta[1]) + \
             theta[2]**2 * np.eye(len(X_train))
 
         return 0.5 * np.log(det(k)) + \
@@ -84,7 +84,7 @@ def nll_fn(X_train, Y_train, naive=False):
                0.5 * len(X_train) * np.log(2*np.pi)
         
     def nll_stable(theta):      
-        k = kernel(X_train, X_train, sigma_l=theta[0], sigma_f=theta[1]) + \
+        k = kernel(X_train, X_train, lengthscale=theta[0], sigma_f=theta[1]) + \
             theta[2]**2 * np.eye(len(X_train))
         L = cholesky(k)
         

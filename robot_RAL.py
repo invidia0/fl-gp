@@ -11,6 +11,8 @@ from matplotlib.path import Path
 from shapely.geometry import Polygon, Point
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
+from scipy.optimize import minimize
+import gpr
 
 class Robot:
     def __init__(self,
@@ -353,41 +355,6 @@ class Robot:
                             sigma_f=self._sigma_f,
                             sigma_y=self._sigma_y)
         return mu, cov
-    
-    def filter_dataset(self) -> None:
-        """ Nyström approximation """
-        self._x_train = self._observations[:, :2]
-        self._y_train = self._observations[:, 2].reshape(-1, 1)
-
-        K = utils.RBFKernel(self._x_train, self._x_train, self._lengthscale, self._sigma_f) + self._sigma_y**2 * np.eye(self._x_train.shape[0])
-        eigvals, eigvecs = np.linalg.eigh(K)
-        sorted_indices = np.argsort(eigvals)[::-1] # Sort the eigenvalues in descending order
-        eigvals = eigvals[sorted_indices] # Sort the eigenvalues
-        eigvecs = eigvecs[:, sorted_indices] # Sort the eigenvectors
-        n_top = np.argmax(np.cumsum(eigvals) / np.sum(eigvals) >= 0.95) + 1 # Find the number of components needed to explain 95% of the variance
-        top_eigvecs = eigvecs[:, :n_top]
-        # Initialize a set to store all influential points
-        all_influential_points = set()
-
-        # For each of these eigenvectors, find the data points corresponding to the largest magnitude entries.
-        # These points are the "influential points" for the eigenvector.
-        for i in range(n_top):
-            # Compute absolute values of the eigenvector
-            abs_eigvec = np.abs(top_eigvecs[:, i])
-            
-            # Set a threshold (e.g., 50% of the maximum value)
-            threshold = 0.97  * np.max(abs_eigvec)
-            
-            # Find points above the threshold
-            influential_points = np.where(abs_eigvec > threshold)[0]
-
-            all_influential_points.update(influential_points)
-
-        # Highlight the influential points in the covariance matrix
-        influential_points_list = list(all_influential_points)
-
-        # Filter the dataset and store the influential points and their corresponding values into self._dataset
-        self._dataset = self._observations[influential_points_list]
 
     def sense(self, points, value, first=False):
         """
@@ -398,8 +365,7 @@ class Robot:
         
         if not first:
             mu, cov = self.predict(points)
-
-            std = np.sqrt(np.diag(cov))
+            std = np.sqrt(np.diag(cov)) 
 
             mask = (std > self.sigma_y + self._maxTakeErr * self._mu_max).reshape(-1)
             
@@ -414,7 +380,21 @@ class Robot:
         mu, cov = self.predict(self._mesh)
         self._mean = np.reshape(mu, (self._xVals.shape[0], self._yVals.shape[0]))
         self._cov = np.reshape(np.diag(cov), (self._xVals.shape[0], self._yVals.shape[0]))
+        self._std = np.reshape(np.sqrt(np.diag(cov)), (self._xVals.shape[0], self._yVals.shape[0]))
         self._cov_rec = np.reshape(1/np.diag(cov), (self._xVals.shape[0], self._yVals.shape[0]))
         self._mu_max = np.max(self._mean)
         self._mu_min = np.min(self._mean)
         self._delta = self._mu_max - self._mu_min
+
+    # RAL 2023
+    def fit(self) -> None:
+        self._x_train = self._observations[:, :2]
+        self._y_train  = np.atleast_2d(self._observations[:, 2]).T
+
+        res = minimize(gpr.nll_fn(self._x_train , self._y_train, naive=False), [1, 1, 1],
+            bounds=((1e-5, None), (1e-5, None), (1e-5, None)),
+            method='L-BFGS-B')
+
+        self._lengthscale, self._sigma_f, self._sigma_y = res.x
+        print(f"Robot {self._id} has hyps: {self._lengthscale}, {self._sigma_f}, {self._sigma_y}")
+        self._nll = res.fun

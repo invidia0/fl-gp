@@ -2,6 +2,36 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.spatial import Voronoi
+from matplotlib.path import Path
+from shapely.geometry import Polygon, Point
+import xarray as xr
+from scipy.interpolate import griddata
+import time
+
+def evaluate_points_in_field(field, points, method='linear'):
+    """
+    Evaluate the values at specified points in a given 2D field.
+
+    Parameters:
+    - field: 2D numpy array representing the field.
+    - points: numpy array of shape (n_points, 2) representing the coordinates to evaluate.
+    - method: Interpolation method (default is 'linear'). Options: 'linear', 'nearest', 'cubic'.
+
+    Returns:
+    - values: 1D numpy array of interpolated values at the specified points.
+    """
+    # Define the grid based on the field dimensions
+    grid_x, grid_y = np.meshgrid(np.arange(field.shape[1]), np.arange(field.shape[0]))
+
+    # Flatten the grid and the field for interpolation
+    coords = np.column_stack([grid_x.flatten(), grid_y.flatten()])
+    field_flat = field.flatten()
+
+    # Interpolate the values at the specified points
+    values = griddata(coords, field_flat, points, method=method)
+    
+    return values
 
 def gauss_pdf_array(x, y, sigma, mean, max_val=1.0):
     """ Computes the probability density function of a 2D Gaussian distribution. """
@@ -146,7 +176,7 @@ def posterior(X_eval: np.ndarray,
     k_inv = np.linalg.inv(k)
 
     mu = k_s.T.dot(k_inv).dot(Y_train)
-    cov = (k_ss - k_s.T.dot(k_inv).dot(k_s))
+    cov = (k_ss - k_s.T.dot(k_inv).dot(k_s)) + sigma_y**2 * np.eye(len(X_eval))
 
     mu[mu < 0] = 0
     cov[cov < 0] = 0
@@ -158,8 +188,8 @@ def log_likelihood_grad(robot):
     Computes the gradient of the log-likelihood with respect to 
     the hyperparameters: lengthscale, sigma_f, and sigma_y.
     """
-    # X = robot.get_dataset()[:, :2]
-    # y = robot.get_dataset()[:, 2]
+    # X = robot.observations[:, :2]
+    # y = robot.observations[:, 2]
     X = robot.dataset[:, :2]
     y = robot.dataset[:, 2]
     y = np.atleast_2d(y).T
@@ -189,42 +219,39 @@ def log_likelihood_grad(robot):
     return np.array([dNLL_lengthscale, dNLL_sigma_f, dNLL_sigma_y], dtype=np.float128)
 
 # Function to process each group
-def process_group(group, robots, s_end_DEC_gapx, rho, ki, beta, eps, s_end_DAC, x1_, x2_, ROB_NUM):
-    print(f"Group {group} is being processed")
-    
-    # Extract robots in the current group
-    robots_group = [robot for robot in robots if robot.group == group]
-    
-    for s in range(s_end_DEC_gapx):
-        old_hypers = np.array([robot.hyps for robot in robots_group])
-        tmp_hyps = np.zeros_like(old_hypers)  # Preallocate tmp_hyps with the same shape
+def process_group(robots_group, s_end_DEC_gapx, s_end_DAC, rho, ki, beta, eps, x1_, x2_, ROB_NUM):
+    tmp_hyps = np.empty((len(robots_group), 3))
 
+    # Loop over iterations
+    sTime = time.time()
+    for _ in range(s_end_DEC_gapx):
         for id, robot in enumerate(robots_group):
-            # Collect neighbors' hyperparameters
-            neighbors_hyps = np.vstack([neighbor.hyps for neighbor in robot.neighbors])
+            # Gather neighbors' hyperparameters efficiently
+            neighbors_hyps = np.empty((0, 3), dtype=np.float128)
+            for other_robot in robot.neighbors:
+                neighbors_hyps = np.vstack([neighbors_hyps, other_robot.hyps])
             n_neighbors = neighbors_hyps.shape[0]
 
-            # Duals (30a) (Consensus)
-            sum_diff = np.sum(neighbors_hyps - robot.hyps, axis=0)
+            # Consensus update (Duals update - 30a)
+            sum_diff = np.sum(robot.hyps - neighbors_hyps, axis=0)
             robot.p += rho * sum_diff
 
-            # Primal (34b) (ADMM)
+            # Primal update (34b) using vectorized operations
             first_term = rho * np.sum(neighbors_hyps, axis=0)
             second_term = log_likelihood_grad(robot)
             third_term = (ki + n_neighbors * rho) * robot.hyps
-            res = (first_term - second_term + third_term - robot.p) / (ki + 2 * n_neighbors * rho)
-            tmp_hyps[id] = res
+            tmp_hyps[id] = (1 / (ki + 2 * n_neighbors * rho)) * (first_term - second_term + third_term - robot.p)
 
-        # Update robot hyperparameters
+        # Update robots' hyperparameters in place
         for i, robot in enumerate(robots_group):
             robot.hyps = tmp_hyps[i]
+    DEC_gapx_time = time.time() - sTime
 
-        for robot in robots_group:
-            print(f"Robot {robot.id} has hyperparameters: {robot.hyps}")
-        print(f"- Done! - ")
+    for robot in robots_group:
+        print(f"Robot {robot.id} has hyperparameters: {robot.hyps}")
 
-    # DEC-PoE
-    print(f"DEC-PoE for group {group}")
+    """ DEC-PoE """
+    # Compute the local predictions
     for robot in robots_group:
         robot.update_estimate()
 
@@ -232,13 +259,12 @@ def process_group(group, robots, s_end_DEC_gapx, rho, ki, beta, eps, s_end_DAC, 
     for robot in robots_group:
         robot.w_mu = beta * robot.cov_rec * robot.mean
         robot.w_cov = beta * robot.cov_rec
-
+                
     shape = (len(x1_), len(x2_))
-
-    for s in range(s_end_DAC):
+    sTime = time.time()
+    for _ in range(s_end_DAC):
         sum_mu_diff = np.zeros(shape, dtype=np.float128)
         sum_cov_diff = np.zeros(shape, dtype=np.float128)
-
         for robot in robots_group:
             neighbors_w_mu = np.array([other_robot.w_mu for other_robot in robot.neighbors])
             neighbors_w_cov = np.array([other_robot.w_cov for other_robot in robot.neighbors])
@@ -251,17 +277,178 @@ def process_group(group, robots, s_end_DEC_gapx, rho, ki, beta, eps, s_end_DAC, 
             sum_cov_diff = np.sum(neighbors_w_cov, axis=0) - robot.w_cov * len(robot.neighbors)
             robot.tmp_w_cov = robot.w_cov + eps * sum_cov_diff
 
-        # Update robot properties after the calculation
         for robot in robots_group:
             robot.w_mu = robot.tmp_w_mu
             robot.w_cov = robot.tmp_w_cov
+        
+    for robot in robots_group:
+        robot.cov_rec = ROB_NUM * robot.w_cov
+        robot.std = np.sqrt(1 / robot.cov_rec)
+        robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot.w_mu)
+    DAC_time = time.time() - sTime
+    print("*** Done! ***")
 
-        for robot in robots_group:
-            robot.cov_rec = ROB_NUM * robot.w_cov
-            robot.std = np.sqrt(1 / robot.cov_rec)
-            robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot.w_mu)
+    return DEC_gapx_time, DAC_time
 
-        print(f"- Done! - ")
+def voronoi_algorithm(robots_positions, BBOX, limited=False, sensRange=2):
+    """
+    Decentralized Bounded Voronoi Computation
+    """
+
+    points_left = robots_positions.copy()
+    points_right = robots_positions.copy()
+    points_down = robots_positions.copy()
+    points_up = robots_positions.copy()
+
+    points_left[:, 0] = 2 * BBOX[0] - robots_positions[:, 0]
+    points_right[:, 0] = 2 * BBOX[2] - robots_positions[:, 0]
+    points_down[:, 1] = 2 * BBOX[1] - robots_positions[:, 1]
+    points_up[:, 1] = 2 * BBOX[3] - robots_positions[:, 1]
+
+    points = np.vstack([robots_positions, points_left, points_right, points_down, points_up])
+
+    # Voronoi diagram
+    vor = Voronoi(points)
+    vor.filtered_points = robots_positions
+    vor.filtered_regions = [vor.regions[i] for i in vor.point_region[:len(robots_positions)]]
+    
+    return vor
+
+def voronoi_alg_limited(robots_positions, BBOX, sensRange=2):
+    """
+    Efficiently computes the limited Voronoi regions for a set of robots.
+    
+    Parameters:
+    - robots_positions: Array of robot positions (n x 2).
+    - BBOX: Bounding box of the environment [xmin, ymin, xmax, ymax].
+    - sensRange: Sensing range for clipping the Voronoi regions.
+    
+    Returns:
+    - A list of clipped Voronoi regions as Shapely polygons.
+    """
+    
+    # Mirroring points to handle boundary conditions
+    points_left = robots_positions.copy()
+    points_right = robots_positions.copy()
+    points_down = robots_positions.copy()
+    points_up = robots_positions.copy()
+
+    points_left[:, 0] = 2 * BBOX[0] - robots_positions[:, 0]
+    points_right[:, 0] = 2 * BBOX[2] - robots_positions[:, 0]
+    points_down[:, 1] = 2 * BBOX[1] - robots_positions[:, 1]
+    points_up[:, 1] = 2 * BBOX[3] - robots_positions[:, 1]
+
+    points = np.vstack([robots_positions, points_left, points_right, points_down, points_up])
+
+    # Compute Voronoi diagram for the given robot positions
+    vor = Voronoi(points)
+    
+    # Prepare to store the limited Voronoi regions
+    limited_regions = []
+    
+    # Iterate through each original robot point and its corresponding region
+    for i in range(len(robots_positions)):
+        region_index = vor.point_region[i]
+        region = vor.regions[region_index]
+        
+        # Skip unbounded regions
+        if -1 in region:
+            continue
+        
+        # Get the vertices of the region
+        polygon_vertices = vor.vertices[region]
+        polygon = Polygon(polygon_vertices)
+        
+        # Define the sensing circle for the current robot
+        sensing_circle = Point(robots_positions[i]).buffer(sensRange * 0.5)
+        
+        # Intersect the Voronoi region with the sensing circle
+        limited_region = polygon.intersection(sensing_circle)
+        
+        # Store the result
+        if not limited_region.is_empty:
+            limited_regions.append(limited_region)
+    
+    return limited_regions
+
+def coveragePerformanceFunc(robots_positions, sigma, means, res=50, BBOX=[0, 0, 40, 40]):
+    delta = 1 / res
+    H_pv = 0.0
+
+    # Compute global Voronoi diagram
+    vor = voronoi_algorithm(robots_positions, BBOX)
+
+    for idx, region in enumerate(vor.filtered_regions):
+        vertices = vor.vertices[region]
+        xy = vor.filtered_points[idx]
+
+        # Bounds of the current region
+        x_inf, x_sup = np.min(vertices[:, 0]), np.max(vertices[:, 0])
+        y_inf, y_sup = np.min(vertices[:, 1]), np.max(vertices[:, 1])
+
+        dx = (x_sup - x_inf) * delta
+        dy = (y_sup - y_inf) * delta
+
+        path = Path(vertices)
+
+        x_vals = np.arange(x_inf, x_sup, dx)
+        y_vals = np.arange(y_inf, y_sup, dy)
+        x_grid, y_grid = np.meshgrid(x_vals, y_vals)
+        grid_points = np.vstack([x_grid.ravel(), y_grid.ravel()]).T
+
+        for point in grid_points:
+            i, j = point
+            bool_val = path.contains_points([point])[0]
+            if bool_val:  # Only update if the point is inside the region
+                weight = gmm_pdf_array(i, j, sigma, means, flag_normalize=False)
+                H_pv += (np.linalg.norm(point - xy)**2) * weight * dx * dy
+
+    return H_pv
+
+def coveragePerformanceFuncDataset(robots_positions, field, res=50, BBOX=[0, 0, 40, 40]):
+    delta = 1 / res
+    H_pv = 0.0
+
+    # Define the grid based on the field dimensions
+    grid_x, grid_y = np.meshgrid(np.arange(field.shape[1]), np.arange(field.shape[0]))
+
+    # Flatten the grid and the field for interpolation
+    coords = np.column_stack([grid_x.flatten(), grid_y.flatten()])
+    field_flat = field.flatten()
+
+    # Compute global Voronoi diagram
+    vor = voronoi_algorithm(robots_positions, BBOX)
+
+    for idx, region in enumerate(vor.filtered_regions):
+        vertices = vor.vertices[region]
+        xy = vor.filtered_points[idx]
+
+        # Bounds of the current region
+        x_inf, x_sup = np.min(vertices[:, 0]), np.max(vertices[:, 0])
+        y_inf, y_sup = np.min(vertices[:, 1]), np.max(vertices[:, 1])
+
+        # Create a grid within the bounds of the current region
+        x_vals = np.arange(x_inf, x_sup, delta)
+        y_vals = np.arange(y_inf, y_sup, delta)
+        x_grid, y_grid = np.meshgrid(x_vals, y_vals)
+        grid_points = np.vstack([x_grid.ravel(), y_grid.ravel()]).T
+
+        # Filter grid points that are inside the current region
+        path = Path(vertices)
+        inside_mask = path.contains_points(grid_points)
+        grid_points_inside = grid_points[inside_mask]
+
+        if len(grid_points_inside) == 0:
+            continue
+
+        # Interpolate the field values at the points inside the region
+        weights = griddata(coords, field_flat, grid_points_inside, method='linear', fill_value=0)
+
+        # Calculate the contribution to H_pv for all points inside the region
+        differences = np.linalg.norm(grid_points_inside - xy, axis=1) ** 2
+        H_pv += np.sum(differences * weights) * delta**2
+
+    return H_pv
 
 def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, A) -> None:
     X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
@@ -381,7 +568,7 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
     #     post_var = ax2.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
         
     
-    plt.pause(1)
+    plt.pause(0.01)
     # if t in [1, 2, 3, 99, 100, 110, 120, 150, 200]:
     # plt.savefig(f"pictures/TRO/novf_simple{t}.pdf", bbox_inches='tight', format='pdf', dpi=300)
     # plt.show()

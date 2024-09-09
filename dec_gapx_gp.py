@@ -274,10 +274,10 @@ for i, robot in enumerate(robots):
             if np.linalg.norm(robot.position - other_robot.position) <= 1.5 * region_width:
                 robot.neighbors.append(other_robot)
 
-robotA = robots[4]
-robotB = robots[1]
-robotA.neighbors.remove(robotB)
-robotB.neighbors.remove(robotA)
+# robotA = robots[4]
+# robotB = robots[1]
+# robotA.neighbors.remove(robotB)
+# robotB.neighbors.remove(robotA)
 
 # Update adjacency matrix and max_degree
 A = np.zeros((n_robots, n_robots))
@@ -413,7 +413,7 @@ fig.suptitle("No DEC-PoE")
 eps = 1 / max_degree
 eps = eps / 2
 beta = 1 / n_robots
-s_end_DAC = 5000
+s_end_DAC = 1000
 
 # Compute the local predictions
 for robot in robots:
@@ -430,25 +430,21 @@ for robot in robots:
     robot.w_cov = beta * robot.cov_rec
 
 shape = (len(x1_), len(x2_))
+sTime = time.time()
 for s in range(s_end_DAC):
     sum_mu_diff = np.zeros(shape, dtype=np.float128)
     sum_cov_diff = np.zeros(shape, dtype=np.float128)
     for robot in robots:
-        print(f"{robot.id} - {[neigh.id for neigh in robot.neighbors]}")
         neighbors_w_mu = np.array([other_robot.w_mu for other_robot in robot.neighbors])
         neighbors_w_cov = np.array([other_robot.w_cov for other_robot in robot.neighbors])
-        print(f"{robot.id} - {[neigh.id for neigh in robot.neighbors]}")
 
         # DAC 1 (Mean)
         sum_mu_diff = np.sum(neighbors_w_mu, axis=0) - robot.w_mu * len(robot.neighbors)
         robot.tmp_w_mu = robot.w_mu + eps * sum_mu_diff
-        print(f"{robot.id} - {[neigh.id for neigh in robot.neighbors]}")
 
         # DAC 2 (Covariance)
         sum_cov_diff = np.sum(neighbors_w_cov, axis=0) - robot.w_cov * len(robot.neighbors)
         robot.tmp_w_cov = robot.w_cov + eps * sum_cov_diff
-        print(f"{robot.id} - {[neigh.id for neigh in robot.neighbors]}")
-        print("\n")
     for robot in robots:
         robot.w_mu = robot.tmp_w_mu
         robot.w_cov = robot.tmp_w_cov
@@ -456,7 +452,7 @@ for s in range(s_end_DAC):
 for robot in robots:
     robot.cov_rec = n_robots * robot.w_cov
     robot.mean = (1 / robot.cov_rec) * (n_robots * robot.w_mu)
-
+print(f"Time: {time.time() - sTime}")
 print("Done DEC-PoE!")
 
 # RMSE with original GP
