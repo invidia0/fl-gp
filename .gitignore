@@ -1,12 +1,11 @@
 *.txt
-*.npy
 __pycache__
 *.pyc
 *.nc
 
 # Folders
-12robs/
-data/
-proposed-no-nystrom/
-proposed-sims/
-ral-sims/
+# 12robs/
+# data/
+# proposed-no-nystrom/
+# proposed-sims/
+# ral-sims/
