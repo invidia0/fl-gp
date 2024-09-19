@@ -9,7 +9,7 @@ from scipy.interpolate import griddata
 import concurrent.futures
 
 # Generate data
-np.random.seed(23)
+np.random.seed(106)
 
 area_size = 40
 x_inf, y_inf = 0, 0
@@ -83,7 +83,7 @@ field = (sst_interpolated - sst_interpolated.min()) / (sst_interpolated.max() - 
 # Z = Z.reshape(len(x1_), len(x2_))
 
 """ Robots parameters """
-ROB_NUM = 6
+ROB_NUM = 24
 CAMERA_BOX = 2
 CAMERA_SAMPLES = 10
 
@@ -226,7 +226,7 @@ for t in np.arange(0, PERIOD):
 
 # Save the data
 path = Path().resolve()
-data_folder = path / "ral-sims/sim-3"
+data_folder = path / "24robs_ral/sim-3"
 
 np.save(data_folder / "robotHistory.npy", robotHistory)
 np.save(data_folder / "rmseHistory.npy", rmseHistory)

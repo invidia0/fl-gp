@@ -2,6 +2,9 @@
 __pycache__
 *.pyc
 *.nc
+*.npy
+*.pdf
+*.png
 
 # Folders
 # 12robs/

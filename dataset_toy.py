@@ -75,11 +75,18 @@ sst_at_custom_point = griddata(interpolated_coords, sst_interpolated_flat, [cust
 print(f"SST at custom point {custom_point_of_interest}: {sst_at_custom_point[0]}")
 
 # Plot the region of interest
-plt.figure(figsize=(10, 5))
-plt.imshow(sst_normalized, cmap='jet', origin='lower')
-plt.scatter(custom_point_of_interest[0], custom_point_of_interest[1], c='red', s=100, marker='x')
-plt.colorbar()
-plt.title('SST')
-plt.xlabel('X')
-plt.ylabel('Y')
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(111)
+ax.set_aspect('equal')
+ax.pcolormesh(sst_normalized, cmap='hot', rasterized=True)
+# Remove the axis
+ax.tick_params(axis=u'both', which=u'both',length=0)
+plt.rcParams['grid.color'] = 'black'
+ax.set_xticklabels([])
+# Remove y labels
+ax.set_yticklabels([])
+ax.grid(True, c='black')
+ax.set_xticks(np.arange(0, 100, 10))
+ax.set_yticks(np.arange(0, 100, 10))
+plt.tight_layout()
 plt.show()
