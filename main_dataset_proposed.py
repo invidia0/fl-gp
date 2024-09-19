@@ -89,7 +89,7 @@ x2_ = np.arange(y_inf, y_sup, d_field_)
 _X1, _X2 = np.meshgrid(x1_, x2_)
 mesh = np.vstack([_X1.ravel(), _X2.ravel()]).T
 
-# Generate random means
+# Generate ra05ndom means
 peaks = 4 # np.random.randint(1, 10)
 means = np.random.uniform(low=0, high=area_size, size=(peaks, 2))
 sigma = 30
@@ -101,7 +101,7 @@ field = Z
 """ Robots parameters """
 ROB_NUM = 6
 CAMERA_BOX = 20
-CAMERA_SAMPLES = 10
+CAMERA_SAMPLES = 5
 
 _area_to_cover = (x_sup * y_sup) * 2.0
 RANGE = 2 * np.sqrt((_area_to_cover / ROB_NUM) / np.pi)
@@ -124,17 +124,18 @@ for r in np.arange(ROB_NUM):
                 x1Vals=x1_,
                 x2Vals=x2_,
                 sensing_range=RANGE,
-                sensor_noise=0.1,
+                sensor_noise=0.2,
                 bbox=BBOX,
                 mesh=mesh,
                 field_delta=d_field_)
     robots[r] = rob
 
 """ Figures """
-fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 5))
+# fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 5))
+fig, ax1 = plt.subplots(1, 1, figsize=(10, 5))
 plt.rcParams["pdf.fonttype"] = 42
 
-PERIOD = 150
+PERIOD = 300
 index_init = 600
 index_end = 1400
 step = (index_end - index_init) // PERIOD
@@ -194,7 +195,11 @@ for t in np.arange(0, PERIOD):
 
         # Take 5 random points from the robot sensing area
         points = np.random.uniform(robot.position - CAMERA_BOX, robot.position + CAMERA_BOX, (int(CAMERA_SAMPLES), 2))
+        # Take the samples in a grid from the camera box
+        # points = np.array([[x, y] for x in np.linspace(robot.position[0] - CAMERA_BOX, robot.position[0] + CAMERA_BOX, CAMERA_SAMPLES) for y in np.linspace(robot.position[1] - CAMERA_BOX, robot.position[1] + CAMERA_BOX, CAMERA_SAMPLES)])
+        points = np.clip(points, [0, 0], [x_sup, y_sup])
         y_values = utils.gmm_pdf_array(points[:, 0], points[:, 1], sigma, means, flag_normalize=False) + robot.sensor_noise * np.random.randn(len(points))
+        # Force the samples to be inside the field
         # y_values = utils.evaluate_points_in_field(field, points, method='linear') + robot.sensor_noise * np.random.randn(len(points))
         
         robot.sense(points, y_values, first=first)
@@ -229,7 +234,7 @@ for t in np.arange(0, PERIOD):
     for i, robot in enumerate(robots):
         robot.compute_centroid()
 
-    utils.plot_dataset(fig, t, PERIOD, BBOX, field, ax1, ax2, ax3, x1_, x2_, _X1, _X2, robots, A)
+    utils.plot_dataset(fig, t, PERIOD, BBOX, field, ax1, x1_, x2_, _X1, _X2, robots, A)
 
 
     # Move the robots

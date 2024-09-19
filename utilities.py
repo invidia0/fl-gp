@@ -286,6 +286,9 @@ def process_group(robots_group, s_end_DEC_gapx, s_end_DAC, rho, ki, beta, eps, x
         robot.std = np.sqrt(1 / robot.cov_rec)
         robot.mean = (1 / robot.cov_rec) * (ROB_NUM * robot.w_mu)
     DAC_time = time.time() - sTime
+
+    for robot in robots_group:
+        robot.mu_max = np.max(robot.mean)
     print("*** Done! ***")
 
     return DEC_gapx_time, DAC_time
@@ -450,7 +453,7 @@ def coveragePerformanceFuncDataset(robots_positions, field, res=50, BBOX=[0, 0, 
 
     return H_pv
 
-def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, A) -> None:
+def plot_dataset(fig, t, period, bbox, field, ax1, x1_field: np.ndarray, x2_field: np.ndarray, x1_mesh: np.ndarray, x2_mesh: np.ndarray, robots: np.ndarray, A) -> None:
     X_MIN, Y_MIN, X_MAX, Y_MAX = bbox
     size = 16
     robot_id = 0
@@ -461,7 +464,7 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
     # Set the title of the figure
     fig.suptitle(f"Time Step: {t}", fontsize=16, color="black", family="serif", weight="bold", x=0.5, y=0.9)
     delta_axis = 5
-    for ax in [ax1, ax2, ax3]:
+    for ax in [ax1]:
         ax.clear()
         ax.axis("equal")
         
@@ -479,15 +482,7 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
         ax.plot([X_MIN, X_MAX], [Y_MIN, Y_MIN], 'k-', lw=2)
         ax.plot([X_MAX, X_MAX], [Y_MIN, Y_MAX], 'k-', lw=2)
         ax.plot([X_MIN, X_MAX], [Y_MAX, Y_MAX], 'k-', lw=2)
-        
-        # Set ticks font and size
-        # for tick in ax.xaxis.get_major_ticks():
-        #     tick.label.set_fontsize(size)
-        #     tick.label.set_fontname('serif')
-        # for tick in ax.yaxis.get_major_ticks():
-        #     tick.label.set_fontsize(size)
-        #     tick.label.set_fontname('serif')
-        
+      
         ax.grid(alpha=0.2)
 
     col = "black"
@@ -516,14 +511,14 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
         y = np.atleast_2d(y).T
         ax1.scatter(X[:, 0], X[:, 1], marker='x', alpha=0.2)
 
-    mu = robots[robot_id].mean
-    std = robots[robot_id].std
+    # mu = robots[robot_id].mean
+    # std = robots[robot_id].std
     
-    ax2.set_title(f"Posterior Mean ({robot_id})", fontdict=font)
-    post_mean = ax2.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
+    # ax2.set_title(f"Posterior Mean ({robot_id})", fontdict=font)
+    # post_mean = ax2.contourf(x1_mesh, x2_mesh, mu, cmap="YlGnBu", extend='both')
     
-    ax3.set_title(f"Posterior Variance ({robot_id})", fontdict=font)
-    post_var = ax3.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
+    # ax3.set_title(f"Posterior Variance ({robot_id})", fontdict=font)
+    # post_var = ax3.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
     
     NBINS = 4
     # divider1 = make_axes_locatable(ax1)
@@ -536,25 +531,25 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
     # cbar1.ax.yaxis.label.set_fontname('serif')
     # cbar1.update_ticks()
     
-    divider2 = make_axes_locatable(ax2)
-    cax2 = divider2.append_axes("bottom", size="5%", pad=0.5)
-    cbar2 = plt.colorbar(post_mean, cax=cax2, orientation="horizontal", format="%.1f")
-    cbar2.ax.tick_params(rotation=90)
-    tick_locator = plt.MaxNLocator(nbins=NBINS)
-    cbar2.locator = tick_locator
-    cbar2.ax.yaxis.label.set_fontsize(size)
-    cbar2.ax.yaxis.label.set_fontname('serif')
-    cbar2.update_ticks()
+    # divider2 = make_axes_locatable(ax2)
+    # cax2 = divider2.append_axes("bottom", size="5%", pad=0.5)
+    # cbar2 = plt.colorbar(post_mean, cax=cax2, orientation="horizontal", format="%.1f")
+    # cbar2.ax.tick_params(rotation=90)
+    # tick_locator = plt.MaxNLocator(nbins=NBINS)
+    # cbar2.locator = tick_locator
+    # cbar2.ax.yaxis.label.set_fontsize(size)
+    # cbar2.ax.yaxis.label.set_fontname('serif')
+    # cbar2.update_ticks()
     
-    divider3 = make_axes_locatable(ax3)
-    cax3 = divider3.append_axes("bottom", size="5%", pad=0.5)
-    cbar3 = plt.colorbar(post_var, cax=cax3, orientation="horizontal", format="%.1f")
-    cbar3.ax.tick_params(rotation=90)
-    tick_locator = plt.MaxNLocator(nbins=NBINS)
-    cbar3.locator = tick_locator
-    cbar3.ax.yaxis.label.set_fontsize(size)
-    cbar3.ax.yaxis.label.set_fontname('serif')
-    cbar3.update_ticks()
+    # divider3 = make_axes_locatable(ax3)
+    # cax3 = divider3.append_axes("bottom", size="5%", pad=0.5)
+    # cbar3 = plt.colorbar(post_var, cax=cax3, orientation="horizontal", format="%.1f")
+    # cbar3.ax.tick_params(rotation=90)
+    # tick_locator = plt.MaxNLocator(nbins=NBINS)
+    # cbar3.locator = tick_locator
+    # cbar3.ax.yaxis.label.set_fontsize(size)
+    # cbar3.ax.yaxis.label.set_fontname('serif')
+    # cbar3.update_ticks()
 
     # # For every robot in the simulation plot the mean and variance of the GP
     # for i in range(len(robots)):
@@ -571,14 +566,14 @@ def plot_dataset(fig, t, period, bbox, field, ax1, ax2, ax3, x1_field: np.ndarra
     #     post_var = ax2.contourf(x1_mesh, x2_mesh, std, cmap="gray", extend='both')
         
     
-    plt.pause(0.1)
+    plt.pause(0.01)
     # if t in [1, 2, 3, 99, 100, 110, 120, 150, 200]:
     # plt.savefig(f"pictures/TRO/novf_simple{t}.pdf", bbox_inches='tight', format='pdf', dpi=300)
     # plt.show()
     # plt.savefig(f"frames/static/frame_{t}.png", bbox_inches='tight', format='png', dpi=300)
     # plt.savefig(f"frames/webots2/frame_{t}.png", bbox_inches='tight', format='png', dpi=300)
 
-    if t != period:
+    # if t != period:
         # cbar1.remove()
-        cbar2.remove()
-        cbar3.remove()
+        # cbar2.remove()
+        # cbar3.remove()
