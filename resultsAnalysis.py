@@ -5,6 +5,7 @@ from pathlib import Path
 from scipy.interpolate import griddata
 import xarray as xr
 import seaborn as sns
+import os
 
 # np.random.seed(0)
 
@@ -70,8 +71,8 @@ sst_interpolated = griddata(
 # Min-Max Normalization
 field = (sst_interpolated - sst_interpolated.min()) / (sst_interpolated.max() - sst_interpolated.min())
 
-general = 0
-metrics = 1
+general = 1
+metrics = 0
 time_comparison = 0
 
 fontsize = 22
@@ -636,15 +637,87 @@ for sim in sims_nofilter:
     rmseHistory_nofilter.append(rmseHistory)
 
 
+
+# fig = plt.figure(figsize=(10, 5))
+# robotHistory = robotHistory_12[0]
+# robNum = robotHistory.shape[0]
+# sensRange = np.sqrt(((x_sup * y_sup) * 1.0 / robNum) / np.pi) * 2
+
+# ax = fig.add_subplot(111, aspect='equal')
+# c = ax.pcolormesh(np.linspace(0, target_size[1], target_size[1]),
+#             np.linspace(0, target_size[0], target_size[0]),
+#             field, cmap=cmap, alpha=1)
+# # Plot the border of the field
+# ax.plot([0, 0, target_size[1], target_size[1], 0], [0, target_size[0], target_size[0], 0, 0], color='white', linewidth=2)
+
+# # ax.set_xticks(np.arange(0, target_size[1] + 1, 10))
+# # ax.set_yticks(np.arange(0, target_size[0] + 1, 10))
+# # # Set fontdict for ticks
+# # for label in (ax.get_xticklabels() + ax.get_yticklabels()):
+# #     label.set_fontname('serif')
+# #     label.set_fontsize(fontsize)
+# #     label.set_color('black')
+
+# # Plot the robot paths
+# ax.set_xticks([])
+# ax.set_yticks([])
+# # color = 'white'
+# # for i in range(robNum):
+# #     ax.scatter(robotHistory[i, 0, 0], robotHistory[i, 1, 0], marker='o', label=f'Robot {i}', color=f'C{i}')
+# #     ax.text(robotHistory[i, 0, 0] + 2, robotHistory[i, 1, 0] + 2, f'{i}', ha='center', va='center', fontdict=fontdict, color=f'C{i}')
+# # # Plot the voronoi regions
+# # limRegions = utils.voronoi_alg_limited(robotHistory[:, :, 0], BBOX, sensRange)
+# # for i, region in enumerate(limRegions):
+# #     # Extract the exterior coordinates of the Polygon
+# #     x, y = region.exterior.xy
+# #     ax.plot(x, y, color=f'C{i}', linewidth=2)
+# # # Remove plot border
+# ax.spines['top'].set_visible(False)
+# ax.spines['right'].set_visible(False)
+# ax.spines['bottom'].set_visible(False)
+# ax.spines['left'].set_visible(False)
+# # # Plot the border of the field
+# # ax.plot([0, 0, target_size[1], target_size[1], 0], [0, target_size[0], target_size[0], 0, 0], color='white', linewidth=2)
+# # ax.plot([0, 0, target_size[1], target_size[1], 0], [0, target_size[0], target_size[0], 0, 0], color='black', linewidth=2)
+# # # Remove white background
+# # ax.set_facecolor('none')
+
+# # # Plot the robot paths
+# # for i in range(robNum):
+# #     ax.plot(robotHistory[i, 0, :], robotHistory[i, 1, :])
+# #     ax.scatter(robotHistory[i, 0, 0], robotHistory[i, 1, 0], s=80, facecolors='none', edgecolors=f'C{i}')
+# #     ax.scatter(robotHistory[i, 0, -1], robotHistory[i, 1, -1], marker='o', label=f'Robot {i}')
+# #     ax.text(robotHistory[i, 0, -1] + 1, robotHistory[i, 1, -1] + 1, f'{i}', ha='center', va='center', fontdict=fontdict)
+# # # Plot the voronoi regions
+# # limRegions = utils.voronoi_alg_limited(robotHistory[:, :, -1], BBOX, sensRange)
+# # for i, region in enumerate(limRegions):
+# #     # Extract the exterior coordinates of the Polygon
+# #     x, y = region.exterior.xy
+# #     ax.plot(x, y, color="black", linewidth=2)
+
+# # ax.grid(True, alpha=0.3)
+# # ax.set_title('Robots & Field', fontdict=fontdict)
+# # colorbar
+# # divider = utils.make_axes_locatable(ax)
+# # cax = divider.append_axes("bottom", size="5%", pad=0.5)
+# # cbar = plt.colorbar(c, cax=cax, orientation="horizontal", format="%.1f")
+# # cbar.ax.tick_params(rotation=90)
+# # for tick in cbar.ax.get_xticklabels():
+# #     tick.set_fontname('serif')
+# #     tick.set_fontsize(fontsize)
+# #     tick.set_color('black')
+# # cbar.update_ticks()
+# plt.tight_layout()
+# # Save as png
+# plt.savefig('figures/video_field.png', dpi=300, transparent=True)
+
+# plt.show()
+
 #######################
 # ROBOT PLOTS
 #######################
 if general:
-    selection = 3
-    robotHistory = robotHistory_6[selection]
-    meanHistory = meanHistory_6[selection]
-    stdHistory = stdHistory_6[selection]
-    fig = plt.figure(figsize=(10, 5))
+
 
     # # Inital position of the robots
     # ax = fig.add_subplot(121, aspect='equal')
@@ -681,101 +754,116 @@ if general:
     #     tick.set_color('black')
     # cbar.update_ticks()
 
+    # Video
+    from concurrent.futures import ProcessPoolExecutor
 
-    ax = fig.add_subplot(131, aspect='equal')
-    c = ax.contourf(np.linspace(0, target_size[1], target_size[1]),
-                np.linspace(0, target_size[0], target_size[0]),
-                field, cmap=cmap, alpha=alpha, extend='both')
-    ax.set_xticks(np.arange(0, target_size[1] + 1, 10))
-    ax.set_yticks(np.arange(0, target_size[0] + 1, 10))
-    # Set fontdict for ticks
-    for label in (ax.get_xticklabels() + ax.get_yticklabels()):
-        label.set_fontname('serif')
-        label.set_fontsize(fontsize)
-        label.set_color('black')
-    # Plot the robot paths
-    for i in range(robNum):
-        ax.plot(robotHistory[i, 0, :], robotHistory[i, 1, :])
-        ax.scatter(robotHistory[i, 0, 0], robotHistory[i, 1, 0], s=80, facecolors='none', edgecolors=f'C{i}')
-        ax.scatter(robotHistory[i, 0, -1], robotHistory[i, 1, -1], marker='o', label=f'Robot {i}')
-        ax.text(robotHistory[i, 0, -1] + 1, robotHistory[i, 1, -1] + 1, f'{i}', ha='center', va='center', fontdict=fontdict)
-    # Plot the voronoi regions
-    limRegions = utils.voronoi_alg_limited(robotHistory[:, :, -1], BBOX, sensRange)
-    for i, region in enumerate(limRegions):
-        # Extract the exterior coordinates of the Polygon
-        x, y = region.exterior.xy
-        ax.plot(x, y, color="black", linewidth=2)
-    ax.grid(True, alpha=0.3)
-    ax.set_title('Robots & Field', fontdict=fontdict)
-    # colorbar
-    divider = utils.make_axes_locatable(ax)
-    cax = divider.append_axes("bottom", size="5%", pad=0.5)
-    cbar = plt.colorbar(c, cax=cax, orientation="horizontal", format="%.1f")
-    cbar.ax.tick_params(rotation=90)
-    for tick in cbar.ax.get_xticklabels():
-        tick.set_fontname('serif')
-        tick.set_fontsize(fontsize)
-        tick.set_color('black')
-    cbar.update_ticks()
+    # Precompute variables outside the loop
+    selection = 3
+    robotHistory = robotHistory_6[selection]
+    meanHistory = meanHistory_6[selection]
+    stdHistory = stdHistory_6[selection]
+    robNum = robotHistory.shape[0]
+    sensRange = np.sqrt(((x_sup * y_sup) / robNum) / np.pi) * 2
+    labelcolor = 'white'
 
+    # Create helper functions
+    def plot_field(ax, data, title, cmap, fontsize, labelcolor, target_size, alpha):
+        """Plot contour field and configure axis."""
+        c = ax.contourf(np.linspace(0, target_size[1], target_size[1]),
+                        np.linspace(0, target_size[0], target_size[0]),
+                        data, cmap=cmap, alpha=alpha, extend='both')
+        ax.set_xticks(np.arange(0, target_size[1] + 1, 10))
+        ax.set_yticks(np.arange(0, target_size[0] + 1, 10))
+        ax.grid(True, alpha=0.3)
+        ax.set_title(title, fontsize=fontsize, color=labelcolor, family='serif')
+        for label in (ax.get_xticklabels() + ax.get_yticklabels()):
+            label.set_fontname('serif')
+            label.set_fontsize(fontsize)
+            label.set_color(labelcolor)
+        return c
 
-    # Plot the Prediction Mean
-    ax = fig.add_subplot(132, aspect='equal')
-    c = ax.contourf(np.linspace(0, target_size[1], target_size[1]),
-                    np.linspace(0, target_size[0], target_size[0]),
-                    meanHistory[-1, 0, :, :], cmap=cmap, alpha=alpha, extend='both')
-    ax.set_xticks(np.arange(0, target_size[1] + 1, 10))
-    ax.set_yticks(np.arange(0, target_size[0] + 1, 10))
-    ax.grid(True, alpha=0.3)
-    ax.set_title('Prediction Mean', fontdict=fontdict)
-    # Set fontdict for ticks
-    for label in (ax.get_xticklabels() + ax.get_yticklabels()):
-        label.set_fontname('serif')
-        label.set_fontsize(fontsize)
-        label.set_color('black')
-    # colorbar
-    divider = utils.make_axes_locatable(ax)
-    cax = divider.append_axes("bottom", size="5%", pad=0.5)
-    cbar = plt.colorbar(c, cax=cax, orientation="horizontal", format="%.1f")
-    cbar.ax.tick_params(rotation=90)
-    for tick in cbar.ax.get_xticklabels():
-        tick.set_fontname('serif')
-        tick.set_fontsize(fontsize)
-        tick.set_color('black')
-    cbar.update_ticks()
+    def configure_colorbar(cbar, fontsize, labelcolor):
+        """Configure colorbar settings."""
+        cbar.ax.tick_params(rotation=90)
+        for tick in cbar.ax.get_xticklabels():
+            tick.set_fontname('serif')
+            tick.set_fontsize(fontsize)
+            tick.set_color(labelcolor)
+        cbar.ax.tick_params(axis='both', which='major', color=labelcolor)
 
+    def configure_axes(ax, fontsize, labelcolor):
+        """Configure plot axes."""
+        ax.tick_params(axis='both', which='major', color=labelcolor)
+        ax.spines['top'].set_color(labelcolor)
+        ax.spines['right'].set_color(labelcolor)
+        ax.spines['bottom'].set_color(labelcolor)
+        ax.spines['left'].set_color(labelcolor)
 
-    # Plot the Prediction Std
-    ax = fig.add_subplot(133, aspect='equal')
-    c = ax.contourf(np.linspace(0, target_size[1], target_size[1]),
-                    np.linspace(0, target_size[0], target_size[0]),
-                    stdHistory[-1, 0, :, :], cmap='gray', alpha=alpha, extend='both')
-    ax.set_xticks(np.arange(0, target_size[1] + 1, 10))
-    ax.set_yticks(np.arange(0, target_size[0] + 1, 10))
-    ax.grid(True, alpha=0.3)
-    ax.set_title('Prediction Std.', fontdict=fontdict)
-    # Set fontdict for ticks
-    for label in (ax.get_xticklabels() + ax.get_yticklabels()):
-        label.set_fontname('serif')
-        label.set_fontsize(fontsize)
-        label.set_color('black')
-    # colorbar
-    divider = utils.make_axes_locatable(ax)
-    cax = divider.append_axes("bottom", size="5%", pad=0.5)
-    cbar = plt.colorbar(c, cax=cax, orientation="horizontal", format="%.1f")
-    cbar.ax.tick_params(rotation=90)
-    for tick in cbar.ax.get_xticklabels():
-        tick.set_fontname('serif')
-        tick.set_fontsize(fontsize)
-        tick.set_color('black')
-    cbar.update_ticks()
-    plt.tight_layout()
-    # Set general title
-    fig.suptitle("6-Robots Team Simulation", weight='bold', size=18, color='black', family='serif')
+    def process_frame(j):
+        """Function to process each frame in parallel."""
+        fig = plt.figure(figsize=(10, 5))
+        
+        # Plot Robots & Field
+        ax1 = fig.add_subplot(131, aspect='equal')
+        c1 = plot_field(ax1, field, 'Robots & Field', cmap, fontsize, labelcolor, target_size, alpha)
+        
+        # Plot robot paths and Voronoi regions
+        for i in range(robNum):
+            ax1.plot(robotHistory[i, 0, :j], robotHistory[i, 1, :j])
+            ax1.scatter(robotHistory[i, 0, 0], robotHistory[i, 1, 0], s=80, facecolors='none', edgecolors=f'C{i}')
+            ax1.scatter(robotHistory[i, 0, j], robotHistory[i, 1, j], marker='o', label=f'Robot {i}')
+            ax1.text(robotHistory[i, 0, j] + 1, robotHistory[i, 1, j] + 1, f'{i}', ha='center', va='center', fontdict=fontdict)
+        
+        # Plot Voronoi regions (already precomputed per frame)
+        limRegions = utils.voronoi_alg_limited(robotHistory[:, :, j], BBOX, sensRange)
+        for region in limRegions:
+            x, y = region.exterior.xy
+            ax1.plot(x, y, color="black", linewidth=2)
+        
+        # Add colorbar to Robots & Field
+        divider = utils.make_axes_locatable(ax1)
+        cax1 = divider.append_axes("bottom", size="5%", pad=0.5)
+        cbar1 = plt.colorbar(c1, cax=cax1, orientation="horizontal", format="%.1f")
+        configure_colorbar(cbar1, fontsize, labelcolor)
+        configure_axes(ax1, fontsize, labelcolor)
 
-    # plt.savefig('figures/6Robs_3subfigs_simulation.pdf', format='pdf', bbox_inches='tight', dpi=300)
-    plt.show()
+        # Plot Prediction Mean
+        ax2 = fig.add_subplot(132, aspect='equal')
+        c2 = plot_field(ax2, meanHistory[j, 0, :, :], 'Prediction Mean', cmap, fontsize, labelcolor, target_size, alpha)
+        cax2 = utils.make_axes_locatable(ax2).append_axes("bottom", size="5%", pad=0.5)
+        cbar2 = plt.colorbar(c2, cax=cax2, orientation="horizontal", format="%.1f")
+        configure_colorbar(cbar2, fontsize, labelcolor)
+        configure_axes(ax2, fontsize, labelcolor)
 
+        # Plot Prediction Std
+        ax3 = fig.add_subplot(133, aspect='equal')
+        c3 = plot_field(ax3, stdHistory[j, 0, :, :], 'Prediction Std.', 'gray', fontsize, labelcolor, target_size, alpha)
+        cax3 = utils.make_axes_locatable(ax3).append_axes("bottom", size="5%", pad=0.5)
+        cbar3 = plt.colorbar(c3, cax=cax3, orientation="horizontal", format="%.1f")
+        configure_colorbar(cbar3, fontsize, labelcolor)
+        configure_axes(ax3, fontsize, labelcolor)
+
+        plt.tight_layout()
+        fig.suptitle(f"{robotHistory.shape[0]} Robots Team Simulation", weight='bold', size=18, color=labelcolor, family='serif')
+
+        # Save the frame
+        plt.savefig(f'{robotHistory.shape[0]}robs_video/frame_{j}.png', dpi=300, transparent=True)
+        plt.close(fig)
+        return f'Frame {j} saved'
+
+    # Use ProcessPoolExecutor to parallelize the frame generation
+    with ProcessPoolExecutor() as executor:
+        results = list(executor.map(process_frame, range(1, robotHistory.shape[2])))
+
+    for result in results:
+        print(result)
+
+    # Generate video using ffmpeg
+    os.system(f'ffmpeg -r 5 -i {robotHistory.shape[0]}robs_video/frame_%d.png -vcodec png -pix_fmt yuva420p -crf 18 -preset veryslow figures/{robotHistory.shape[0]}robs_video.mov')
+
+    # Stop the script
+    import sys
+    sys.exit()
 
 
 #######################

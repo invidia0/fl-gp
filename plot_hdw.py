@@ -1,6 +1,7 @@
 import numpy as np
 import utilities as utils
 import matplotlib.pyplot as plt
+from concurrent.futures import ProcessPoolExecutor
 
 def plot_mini_quadcopter(x, y, ax, color='black'):
     ax.scatter(x+4, y+4, s=100, marker='o', color=color, zorder=2)
@@ -11,7 +12,6 @@ def plot_mini_quadcopter(x, y, ax, color='black'):
     ax.plot([x, x-4], [y, y-4], color=color, zorder=2)
     ax.plot([x, x+4], [y, y-4], color=color, zorder=2)
     ax.plot([x, x-4], [y, y+4], color=color, zorder=2)
-
 
 
 # Generate data
@@ -55,30 +55,134 @@ plt.rcParams['font.family'] = 'serif'
 plt.rcParams['pdf.fonttype'] = 42
 plt.rcParams['ps.fonttype'] = 42
 
-robotHistory = np.load('robotHistory.npy')
-end = 143
+robotHistory = np.load('video_hdw/droneHistory.npy')
+end = 609
 
-fig = plt.figure(figsize=(10, 5))
-ax = fig.add_subplot(121)
-# Load png image
-img = plt.imread('figures/hdwPlot.png')
-ax.imshow(img)
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.collections import LineCollection
+
+def plot_mini_quadcopter(x, y, ax, color='black'):
+    ax.scatter(x+4, y+4, s=100, marker='o', color=color, zorder=2)
+    ax.scatter(x-4, y-4, s=100, marker='o', color=color, zorder=2)
+    ax.scatter(x+4, y-4, s=100, marker='o', color=color, zorder=2)
+    ax.scatter(x-4, y+4, s=100, marker='o', color=color, zorder=2)
+    ax.plot([x, x+4], [y, y+4], color=color, zorder=2)
+    ax.plot([x, x-4], [y, y-4], color=color, zorder=2)
+    ax.plot([x, x+4], [y, y-4], color=color, zorder=2)
+    ax.plot([x, x-4], [y, y+4], color=color, zorder=2)
+
+# Set up the figure once
+fig, ax = plt.subplots(figsize=(10, 5))
 ax.set_aspect('equal')
-# Remove grid lines
-ax.grid(False)
-# Remove labels
+ax.grid(True, alpha=0.5)
+
+# Remove tick labels and configure ticks once
 ax.set_xticklabels([])
 ax.set_yticklabels([])
-# Remove tick marks
 ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False)
-# Remove frame
-for spine in ax.spines.values():
-    spine.set_visible(False)
-# Remove title
-ax.set_title('')
+
+# Create static plot elements
+contour = ax.contourf(x1_, x2_, field, cmap=cmap, alpha=alpha)
+
+# Prepare robot history data
+robot_lines = [ax.plot([], [], color=f'C{i}', alpha=1, linewidth=2, zorder=1)[0] for i in range(ROB_NUM)]
+robot_scatter = ax.scatter([], [], s=100, linewidths=2, facecolors='none', edgecolors='none')
+
+# Prepare text elements
+texts = [ax.text(0, 0, '', fontdict=fontdict, ha='center', va='center') for _ in range(ROB_NUM)]
+
+# Prepare quadcopter elements
+quadcopter_elements = [[] for _ in range(ROB_NUM)]
+for i in range(ROB_NUM):
+    color = f'C{i}'
+    for _ in range(4):  # 4 scatter points
+        quadcopter_elements[i].append(ax.scatter([], [], s=100, marker='o', color=color, zorder=2))
+    for _ in range(4):  # 4 lines
+        quadcopter_elements[i].append(ax.plot([], [], color=color, zorder=2)[0])
+
+# Prepare Voronoi line collection
+voronoi_lines = LineCollection([], colors='black', linewidths=2)
+ax.add_collection(voronoi_lines)
+
+for j in range(end):
+    print(j)
+    
+    # Update robot history lines
+    for i, line in enumerate(robot_lines):
+        line.set_data(robotHistory[i, 0, :j+1], robotHistory[i, 1, :j+1])
+    
+    # Update scatter plot
+    robot_scatter.set_offsets(robotHistory[:, :2, j])
+    robot_scatter.set_edgecolors([f'C{i}' for i in range(ROB_NUM)])
+    
+    # Update text and quadcopter positions
+    for i in range(ROB_NUM):
+        x, y = robotHistory[i, 0, j], robotHistory[i, 1, j]
+        texts[i].set_position((x + 10, y + 10))
+        texts[i].set_text(f'{i+2}')
+        
+        # Update quadcopter elements
+        quadcopter_elements[i][0].set_offsets([x+4, y+4])
+        quadcopter_elements[i][1].set_offsets([x-4, y-4])
+        quadcopter_elements[i][2].set_offsets([x+4, y-4])
+        quadcopter_elements[i][3].set_offsets([x-4, y+4])
+        quadcopter_elements[i][4].set_data([x, x+4], [y, y+4])
+        quadcopter_elements[i][5].set_data([x, x-4], [y, y-4])
+        quadcopter_elements[i][6].set_data([x, x+4], [y, y-4])
+        quadcopter_elements[i][7].set_data([x, x-4], [y, y+4])
+    
+    # Update Voronoi regions
+    limRegions = utils.voronoi_alg_limited(robotHistory[:, :2, j], BBOX, RANGE)
+    voronoi_lines.set_segments([np.array(region.exterior.coords) for region in limRegions])
+    
+    # Save the frame
+    plt.savefig(f'video_hdw/frames/frame_{j}.png', bbox_inches='tight', dpi=300, pad_inches=0, format='png')
+    
+    # Clear the figure for the next iteration
+    fig.canvas.draw()
+    fig.canvas.flush_events()
 
 
-ax = fig.add_subplot(122)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# fig = plt.figure(figsize=(10, 5))
+# ax = fig.add_subplot(121)
+# # Load png image
+# img = plt.imread('figures/hdwPlot.png')
+# ax.imshow(img)
+# ax.set_aspect('equal')
+# # Remove grid lines
+# ax.grid(False)
+# # Remove labels
+# ax.set_xticklabels([])
+# ax.set_yticklabels([])
+# # Remove tick marks
+# ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False)
+# # Remove frame
+# for spine in ax.spines.values():
+#     spine.set_visible(False)
+# # Remove title
+# ax.set_title('')
+
+fig = plt.figure(figsize=(10, 5))
+ax = fig.add_subplot(111)
 ax.contourf(x1_, x2_, field, cmap=cmap, alpha=alpha)
 ax.set_aspect('equal')
 for label in (ax.get_xticklabels() + ax.get_yticklabels()):
@@ -111,7 +215,7 @@ ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, r
 # ax.set_title('Quadrotors and Field to Cover', fontdict=fontdict)
 ax.grid(True, alpha=0.5)
 # plt.savefig('figures/hdw_quadrotors_field.pdf', bbox_inches='tight', dpi=300, pad_inches=0, format='pdf')
-fig.suptitle(f'Area to cover: 400m\u00b2', fontsize=fontsize, fontweight='bold', fontfamily='serif', y=0.95)
+# fig.suptitle(f'Area to cover: 400m\u00b2', fontsize=fontsize, fontweight='bold', fontfamily='serif', y=0.95)
 # # Remove grid lines
 # ax.grid(False)
 # # Remove labels
@@ -131,6 +235,6 @@ fig.suptitle(f'Area to cover: 400m\u00b2', fontsize=fontsize, fontweight='bold',
 # # Remove white space around the image
 # plt.margins(0)
 # plt.savefig('figures/hdw_field_of_interest.png', bbox_inches='tight', dpi=300, pad_inches=0)
-plt.savefig('figures/hdw_quadrotors_field.pdf', bbox_inches='tight', dpi=300, pad_inches=0, format='pdf')
+# plt.savefig('figures/hdw_quadrotors_field.pdf', bbox_inches='tight', dpi=300, pad_inches=0, format='pdf')
 plt.tight_layout()
 plt.show()
